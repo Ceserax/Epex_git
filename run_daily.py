@@ -218,8 +218,25 @@ def send_whatsapp_image(image_path: Path):
         else:
             print(f"[whatsapp] fail {rcp}: {resp.status_code} {resp.text}")
     print(f"[whatsapp] sent {ok}/{len(RECIPIENTS)}")
+from zoneinfo import ZoneInfo
+from pathlib import Path
+from datetime import datetime
+
 
 def main():
+    now = datetime.now(ZoneInfo("Europe/Amsterdam"))
+
+    if now.hour < 13:
+        print("[guard] vóór 13:00 NL, stop.")
+        return
+
+    state_dir = Path(".state")
+    state_dir.mkdir(exist_ok=True)
+    sent_flag = state_dir / f"sent_{now.date().isoformat()}.txt"
+    if sent_flag.exists():
+        print("[guard] vandaag al verstuurd, stop.")
+        return
+
     api_key = os.environ["ENTSOE_API_KEY"]
 
     today = datetime.now()
@@ -240,7 +257,17 @@ def main():
     collage = OUTPUT_DIR / f"Energy_Collage_{d_delivery}.jpg"
     create_collage([p1, p2, p3, p4], collage)
 
-    send_whatsapp_image(collage)
+    try:
+        print("[whatsapp] sending...")
+        send_whatsapp_image(collage)
+        print("[whatsapp] sent OK")
+    except Exception as e:
+        print("[whatsapp] ERROR:", type(e).__name__, e)
+        raise
+
+    sent_flag.write_text(f"sent at {now.isoformat()}\n", encoding="utf-8")
+    print("[guard] sent flag written:", sent_flag)
+
 
 if __name__ == "__main__":
     main()
