@@ -1,0 +1,7 @@
+.env
+output/
+screenshots/
+chrome_profile_*/
+__pycache__/
+.ipynb_checkpoints/
+.DS_Store

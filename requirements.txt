@@ -1,0 +1,7 @@
+pandas
+numpy
+matplotlib
+Pillow
+requests
+python-dotenv
+entsoe-py
