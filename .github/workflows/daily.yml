@@ -41,7 +41,7 @@ jobs:
           WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.WHATSAPP_PHONE_NUMBER_ID }}
           WHATSAPP_RECIPIENTS: ${{ secrets.WHATSAPP_RECIPIENTS }}
         run: |
-          python src/run_daily.py
+          python run_daily.py
 
       - name: Save sent-state cache
         uses: actions/cache@v4
