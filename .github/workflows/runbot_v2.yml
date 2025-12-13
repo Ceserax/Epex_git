@@ -1,0 +1,53 @@
+name: ENTSO-E watcher (robust v2)
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/5 10-13 * * *"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Restore sent-state cache
+        uses: actions/cache@v4
+        with:
+          path: .state
+          key: sent-state-${{ github.run_id }}
+          restore-keys: |
+            sent-state-
+
+      - name: Debug paths
+        run: |
+          pwd
+          ls -la
+          ls -la .github/workflows || true
+
+      - name: Run bot
+        env:
+          ENTSOE_API_KEY: ${{ secrets.ENTSOE_API_KEY }}
+          WHATSAPP_TOKEN: ${{ secrets.WHATSAPP_TOKEN }}
+          WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.WHATSAPP_PHONE_NUMBER_ID }}
+          WHATSAPP_RECIPIENTS: ${{ secrets.WHATSAPP_RECIPIENTS }}
+        run: |
+          python run_daily.py
+
+      - name: Save sent-state cache
+        uses: actions/cache@v4
+        with:
+          path: .state
+          key: sent-state-${{ github.run_id }}
