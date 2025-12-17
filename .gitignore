@@ -1,7 +1,21 @@
+# Secrets / env
 .env
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Virtualenv + runtime state
+.venv/
+.state/
+
+# Outputs / artifacts
 output/
 screenshots/
-chrome_profile_*/
-__pycache__/
-.ipynb_checkpoints/
+
+# OS / misc
 .DS_Store
+
+# Local browser profile(s)
+chrome_profile_*/
