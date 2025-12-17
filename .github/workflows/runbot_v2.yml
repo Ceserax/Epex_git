@@ -15,9 +15,11 @@ jobs:
     timeout-minutes: 180
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
@@ -27,7 +29,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # Maak een dag-key (UTC) voor de cache
+      # Cache-key per dag (UTC) zodat .state blijft bestaan én geen cache-lock conflicts geeft
       - name: Set day key
         run: echo "DAY_KEY=$(date -u +'%Y-%m-%d')" >> $GITHUB_ENV
 
@@ -51,7 +53,7 @@ jobs:
           ENTSOE_API_KEY: ${{ secrets.ENTSOE_API_KEY }}
           WHATSAPP_TOKEN: ${{ secrets.WHATSAPP_TOKEN }}
           WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.WHATSAPP_PHONE_NUMBER_ID }}
-          WHATSAPP_RECIPIENTS: ${{ secrets.WHATSAPP_RECIPIENTIENTS }}
+          WHATSAPP_RECIPIENTS: ${{ secrets.WHATSAPP_RECIPIENTS }}
         run: |
           python run_daily.py
 
