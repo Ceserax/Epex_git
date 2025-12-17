@@ -1,9 +1,13 @@
 name: ENTSO-E watcher (robust v2)
 
+concurrency:
+  group: energybot
+  cancel-in-progress: true
+
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/5 10-13 * * *"
+    - cron: "*/5 12-13 * * *"
 
 jobs:
   run:
@@ -23,19 +27,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # 🔒 HERSTEL gedeelde state (NIET per run!)
       - name: Restore sent-state cache
         uses: actions/cache@v4
         with:
           path: .state
-          key: sent-state-${{ github.run_id }}
+          key: energybot-state
           restore-keys: |
-            sent-state-
+            energybot-state
 
       - name: Debug paths
         run: |
           pwd
           ls -la
-          ls -la .github/workflows || true
+          ls -la .state || true
 
       - name: Run bot
         env:
@@ -46,8 +51,9 @@ jobs:
         run: |
           python run_daily.py
 
+      # 💾 CACHE wordt automatisch bijgewerkt als .state wijzigt
       - name: Save sent-state cache
         uses: actions/cache@v4
         with:
           path: .state
-          key: sent-state-${{ github.run_id }}
+          key: energybot-state

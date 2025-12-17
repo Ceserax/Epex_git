@@ -165,6 +165,7 @@ def create_collage(paths, out_path: Path, grid=(2, 2), cell_size=(1000, 800)):
         canvas.paste(im, (x, y))
 
     canvas.save(out_path, quality=90)
+    print("[debug] collage gemaakt:", out_path)
     return out_path
     print("[debug] collage gemaakt:", collage)
 
