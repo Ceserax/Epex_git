@@ -227,8 +227,8 @@ from datetime import datetime
 def main():
     now = datetime.now(ZoneInfo("Europe/Amsterdam"))
 
-    if now.hour < 13:
-        print("[guard] vóór 13:00 NL, stop.")
+    if now.hour < 14:
+        print("[guard] vóór 14:00 NL, stop.")
         return
 
     state_dir = Path(".state")
