@@ -27,19 +27,23 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # 🔒 HERSTEL gedeelde state (NIET per run!)
+      # Maak een dag-key (UTC) voor de cache
+      - name: Set day key
+        run: echo "DAY_KEY=$(date -u +'%Y-%m-%d')" >> $GITHUB_ENV
+
       - name: Restore sent-state cache
         uses: actions/cache@v4
         with:
           path: .state
-          key: energybot-state
+          key: energybot-state-${{ env.DAY_KEY }}
           restore-keys: |
-            energybot-state
+            energybot-state-
 
       - name: Debug paths
         run: |
           pwd
           ls -la
+          echo "DAY_KEY=$DAY_KEY"
           ls -la .state || true
 
       - name: Run bot
@@ -47,13 +51,12 @@ jobs:
           ENTSOE_API_KEY: ${{ secrets.ENTSOE_API_KEY }}
           WHATSAPP_TOKEN: ${{ secrets.WHATSAPP_TOKEN }}
           WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.WHATSAPP_PHONE_NUMBER_ID }}
-          WHATSAPP_RECIPIENTS: ${{ secrets.WHATSAPP_RECIPIENTS }}
+          WHATSAPP_RECIPIENTS: ${{ secrets.WHATSAPP_RECIPIENTIENTS }}
         run: |
           python run_daily.py
 
-      # 💾 CACHE wordt automatisch bijgewerkt als .state wijzigt
       - name: Save sent-state cache
         uses: actions/cache@v4
         with:
           path: .state
-          key: energybot-state
+          key: energybot-state-${{ env.DAY_KEY }}
