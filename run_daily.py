@@ -1,274 +1,220 @@
 import os
+import time
+import subprocess
 import numpy as np
 import pandas as pd
 import matplotlib
-matplotlib.use("Agg")  # nodig op headless runners
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from PIL import Image, ImageDraw
 import requests
 from dotenv import load_dotenv
-from pathlib import Path
+from zoneinfo import ZoneInfo
+
+# Selenium imports
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+
+# ENTSO-E Watcher
+from watcher_entsoe import wait_for_day_ahead 
 
 load_dotenv(Path(__file__).with_name(".env"))
 
-from watcher_entsoe import wait_for_day_ahead  # let op: naam moet matchen in watcher_entsoe.py
-
 TZ = "Europe/Amsterdam"
 
-# ENTSO-E bidding zone EIC codes
+# Configuratie
 ZONES = {
-    "PL": "10YPL-AREA-----S",
-    "NL": "10YNL----------L",
-    "DE-LU": "10Y1001A1001A82H",
-    "BE": "10YBE----------2",
-    "FR": "10YFR-RTE------C",
-    "AT": "10YAT-APG------L",
+    "NL": "10YNL----------L", "BE": "10YBE----------2", "DE-LU": "10Y1001A1001A82H",
+    "FR": "10YFR-RTE------C", "AT": "10YAT-APG------L", "PL": "10YPL-AREA-----S",
+    "DK1": "10YDK-1--------W", "DK2": "10YDK-2--------M", "NO1": "10YNO-1--------2",
+    "SE3": "10Y1001A1001A46L", "IT-N": "10Y1001A1001A73I", "ES": "10YES-REE------0",
+    "CH": "10YCH-SWISSGRIDZ", "CZ": "10YCZ-CEPS-----N", "HU": "10YHU-MAVIR----U",
 }
 
 COUNTRIES = {
-    "PL": {"color": "#1f77b4"},
-    "NL": {"color": "#ff7f0e"},
-    "DE-LU": {"color": "#2ca02c"},
-    "BE": {"color": "#d62728"},
-    "FR": {"color": "#9467bd"},
-    "AT": {"color": "#8c564b"},
+    "NL": {"color": "#ff7f0e"}, "BE": {"color": "#d62728"}, "DE-LU": {"color": "#2ca02c"},
+    "FR": {"color": "#9467bd"}, "AT": {"color": "#8c564b"}, "PL": {"color": "#1f77b4"},
+    "DK1": {"color": "#e377c2"}, "DK2": {"color": "#f7b6d2"}, "NO1": {"color": "#bcbd22"},
+    "SE3": {"color": "#17becf"}, "IT-N": {"color": "#aec7e8"}, "ES": {"color": "#ffbb78"},
+    "CH": {"color": "#ff9896"}, "CZ": {"color": "#c5b0d5"}, "HU": {"color": "#c49c94"},
 }
 
 BASE_DIR = Path(os.getcwd())
 OUTPUT_DIR = BASE_DIR / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-load_dotenv()  # lokaal ok; op GitHub komen env vars via Secrets
-
 TOKEN = os.environ.get("WHATSAPP_TOKEN")
 PHONE_ID = os.environ.get("WHATSAPP_PHONE_NUMBER_ID")
 RECIPIENTS = [r.strip() for r in os.environ.get("WHATSAPP_RECIPIENTS", "").split(",") if r.strip()]
 
-def hourly_to_quarters(hourly: np.ndarray) -> np.ndarray:
-    return np.repeat(hourly, 4)
+# --- HELPER FUNCTIES ---
 
-def plot_nl(nl_hourly: np.ndarray, d_trading: str, d_delivery: str):
-    if nl_hourly is None or len(nl_hourly) < 20:
-        return None
+def ensure_96_quarters(data: np.ndarray) -> np.ndarray:
+    length = len(data)
+    if length == 96: return data
+    if length == 24: return np.repeat(data, 4)
+    if length == 48: return np.repeat(data, 2)
+    return np.interp(np.linspace(0, length, 96), np.arange(length), data)
 
-    q = hourly_to_quarters(nl_hourly)
-    baseload = float(np.mean(q))
-    peak = q[32:80] if len(q) >= 80 else q
-    peakload = float(np.mean(peak))
-    std_dev = float(np.std(q))
-    min_p = float(np.min(q))
-    max_p = float(np.max(q))
-
+# --- PANEL 1: NL BAR PLOT ---
+def plot_nl(nl_data: np.ndarray, d_trading: str, d_delivery: str):
+    if nl_data is None or len(nl_data) == 0: return None
+    q = ensure_96_quarters(nl_data)
+    max_p, min_p = np.max(q), np.min(q)
+    
     colors = []
     for i, p in enumerate(q):
-        if p == max_p:
-            colors.append("red")
-        elif p == min_p:
-            colors.append("green")
-        elif 32 <= i < 80:
-            colors.append("#87CEEB")
-        else:
-            colors.append("gray")
+        if p == max_p: colors.append("#228B22") # HOOGSTE = GROEN
+        elif p == min_p: colors.append("#FF0000") # LAAGSTE = ROOD
+        elif 32 <= i < 80: colors.append("#87CEEB") # PEAK = BLAUW
+        else: colors.append("#7d7d7d") # OFF-PEAK = GRIJS
 
-    plt.figure(figsize=(14, 7))
-    plt.bar(range(len(q)), q, color=colors, edgecolor="black", linewidth=0.5, width=0.8)
-
-    plt.title(
-        f"Netherlands {d_trading} | ENTSO-E DA: {d_delivery}\n"
-        f"Baseload: €{baseload:.2f}  Peakload: €{peakload:.2f}  Std Dev: €{std_dev:.2f}",
-        fontsize=14
-    )
-    plt.ylabel("Prijs (€/MWh)", fontsize=12)
-    plt.xlabel("Kwartieren (uur)", fontsize=12)
-    plt.grid(True, which="both", linestyle="-", linewidth=0.5, color="gray", alpha=0.5)
-    plt.minorticks_on()
-    plt.grid(which="minor", linestyle=":", linewidth=0.5, alpha=0.3)
-
-    xticks = list(range(0, len(q), 4))
-    xlabels = list(range(1, min(25, len(xticks) + 1)))
-    plt.xticks(xticks[:24], xlabels[:24])
+    fig, ax = plt.subplots(figsize=(14, 8))
+    ax.bar(range(96), q, color=colors, edgecolor="black", linewidth=0.4, width=1.0)
+    plt.title(f"Netherlands {d_trading} | EPEX Spot DA: {d_delivery}\nBaseload: €{np.mean(q):.2f} Peakload: €{np.mean(q[32:80]):.2f}", fontsize=14)
+    ax.set_xticks(np.arange(2, 96, 4))
+    ax.set_xticklabels([str(i) for i in range(1, 25)])
+    ax.grid(which='both', axis='both', linestyle='-', color='black', alpha=0.1)
+    plt.ylim(min(0, min_p - 10), max(130, max_p + 10))
     plt.tight_layout()
-
     out = OUTPUT_DIR / f"NL_Price_{d_delivery}.jpg"
-    plt.savefig(out, dpi=150, format="jpg")
+    plt.savefig(out, dpi=150)
     plt.close()
     return out
 
+# --- PANEL 2: MULTI COUNTRY ---
 def plot_multi(hourly_map: dict, d_delivery: str):
     plt.figure(figsize=(15, 9))
-
-    stats = []
-    all_flat = []
-    for c, arr in hourly_map.items():
-        if arr is None or len(arr) < 20:
-            continue
-        x = np.arange(1, len(arr) + 1)
-        y = arr.astype(float)
-
-        all_flat.extend(list(y))
-        base = float(np.mean(y))
-        peak = y[8:20] if len(y) >= 20 else y
-        peakv = float(np.mean(peak))
-
-        col = COUNTRIES.get(c, {}).get("color", None)
-        plt.plot(x, y, label=c, color=col, linewidth=1.5)
-        stats.append((c, base, peakv, col))
-
-    if all_flat:
-        y_max = float(np.max(all_flat))
-        y_min = float(np.min(all_flat))
-        y_range = max(1.0, y_max - y_min)
-        x_pos = max(24, int(plt.gca().get_xlim()[1])) - 0.2
-        y_start = y_max
-        for i, (c, base, peakv, col) in enumerate(stats):
-            plt.text(x_pos, y_start - i * (y_range * 0.04),
-                     f"{c}: Base €{base:.2f} | Peak €{peakv:.2f}",
-                     color=col, fontsize=10, ha="right", va="top")
-
-    plt.title(f"Day-Ahead uurgemiddelden - {d_delivery}", fontsize=14)
-    plt.ylabel("Prijs (€/MWh)", fontsize=12)
-    plt.xlabel("Uur", fontsize=12)
-    plt.grid(True, which="major", linestyle="-", alpha=0.8)
-    plt.minorticks_on()
-    plt.grid(True, which="minor", linestyle=":", alpha=0.4)
-    plt.legend(loc="upper left", frameon=True)
+    for c in sorted(hourly_map.keys()):
+        arr = hourly_map[c]
+        if arr is None or len(arr) == 0: continue
+        q_data = ensure_96_quarters(arr)
+        plt.plot(np.arange(96), q_data, label=c, color=COUNTRIES.get(c, {}).get("color", "black"), linewidth=1.5, alpha=0.8)
+    plt.title(f"Day-Ahead Prijsvergelijking Europa (96 Kwartieren) - {d_delivery}", fontsize=15)
+    plt.xticks(np.arange(2, 96, 4), [str(i) for i in range(1, 25)])
+    plt.grid(True, linestyle="--", alpha=0.4)
+    plt.legend(loc='upper left', bbox_to_anchor=(1.01, 1), fontsize=10)
     plt.tight_layout()
-
-    out = OUTPUT_DIR / f"Multi_Country_DA_{d_delivery}.jpg"
-    plt.savefig(out, dpi=150, format="jpg")
+    out = OUTPUT_DIR / f"Multi_Country_{d_delivery}.jpg"
+    plt.savefig(out, dpi=150, bbox_inches='tight')
     plt.close()
     return out
 
-def placeholder(text: str, out: Path, size=(1000, 800)):
-    img = Image.new("RGB", size, (255, 255, 255))
-    d = ImageDraw.Draw(img)
-    d.rectangle([20, 20, size[0]-20, size[1]-20], outline=(0, 0, 0), width=3)
-    d.text((50, 60), text, fill=(0, 0, 0))
-    img.save(out, quality=90)
-    return out
+# --- PANEL 3 & 4: SELENIUM SCREENSHOTS ---
+def capture_external_data():
+    """
+    Maakt screenshots van Tenergy en ICE TTF Gas.
+    """
+    p3_path = OUTPUT_DIR / "Tenergy_imbalance.jpg"
+    p4_path = OUTPUT_DIR / "ICE_TTF_Gas.jpg"
+    
+    chrome_options = Options()
+    # Behoud jouw specifieke profiel-pad
+    chrome_options.add_argument("--user-data-dir=/Users/keeskoot/Library/Application Support/Google/Chrome/WhatsAppProfile")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--window-size=1920,1080")
+    chrome_options.binary_location = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    
+    try:
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+        
+        # Screenshot Tenergy (Panel 3)
+        print("Capturing Tenergy...")
+        driver.get('https://services.tenergy.nl/public.aspx/actualimbalanceprices')
+        time.sleep(5)
+        driver.save_screenshot(str(p3_path).replace(".jpg", ".png"))
+        Image.open(str(p3_path).replace(".jpg", ".png")).convert("RGB").save(p3_path)
+        
+        # Screenshot ICE Gas (Panel 4)
+        print("Capturing ICE Gas...")
+        driver.get('https://www.ice.com/products/27996665/Dutch-TTF-Natural-Gas-Futures/data?marketId=5844634')
+        time.sleep(5)
+        try:
+            # Klik op de grafiek/data knop zoals in jouw script
+            btn = driver.find_element(By.XPATH, '/html/body/div[9]/div[3]/div/div[1]/div/div[2]/div/button[3]')
+            btn.click()
+            time.sleep(3)
+        except: pass
+        
+        driver.save_screenshot(str(p4_path).replace(".jpg", ".png"))
+        Image.open(str(p4_path).replace(".jpg", ".png")).convert("RGB").save(p4_path)
+        
+        driver.quit()
+        return p3_path, p4_path
+    except Exception as e:
+        print(f"Selenium Error: {e}")
+        return None, None
 
-def create_collage(paths, out_path: Path, grid=(2, 2), cell_size=(1000, 800)):
-    imgs = []
-    for p in [p for p in paths if p is not None]:
-        im = Image.open(p)
-        im.thumbnail(cell_size, Image.Resampling.LANCZOS)
-        cell = Image.new("RGB", cell_size, (255, 255, 255))
-        cell.paste(im, ((cell_size[0] - im.size[0]) // 2, (cell_size[1] - im.size[1]) // 2))
-        imgs.append(cell)
-
-    canvas = Image.new("RGB", (grid[0]*cell_size[0], grid[1]*cell_size[1]), (255, 255, 255))
-    for i, im in enumerate(imgs[: grid[0]*grid[1]]):
-        x = (i % grid[0]) * cell_size[0]
-        y = (i // grid[0]) * cell_size[1]
-        canvas.paste(im, (x, y))
-
+# --- COLLAGE & SEND ---
+def create_collage(paths, out_path: Path):
+    cell_size = (1200, 900)
+    canvas = Image.new("RGB", (2400, 1800), (255, 255, 255))
+    positions = [(0, 0), (1200, 0), (0, 900), (1200, 900)]
+    
+    for i, p in enumerate(paths):
+        if p and p.exists():
+            im = Image.open(p)
+            im.thumbnail(cell_size, Image.Resampling.LANCZOS)
+            # Center in cell
+            x_off = positions[i][0] + (cell_size[0] - im.size[0]) // 2
+            y_off = positions[i][1] + (cell_size[1] - im.size[1]) // 2
+            canvas.paste(im, (x_off, y_off))
+            
     canvas.save(out_path, quality=90)
-    print("[debug] collage gemaakt:", out_path)
     return out_path
-    print("[debug] collage gemaakt:", collage)
-
-    print("[debug] token_len:", len(TOKEN or ""))
-    print("[debug] phone_id:", PHONE_ID)
-    print("[debug] recipients:", RECIPIENTS)
-
-    print("[debug] collage:", collage)
-    send_whatsapp_image(collage)   # of jouw send_whatsapp_collage(...)
-    print("[debug] whatsapp send klaar")
 
 def send_whatsapp_image(image_path: Path):
-    if not TOKEN or not PHONE_ID:
-        raise RuntimeError("WHATSAPP_TOKEN / WHATSAPP_PHONE_NUMBER_ID ontbreken.")
-    if not RECIPIENTS:
-        raise RuntimeError("WHATSAPP_RECIPIENTS ontbreekt (comma-separated).")
-
-    upload_url = f"https://graph.facebook.com/v18.0/{PHONE_ID}/media"
+    if not TOKEN or not PHONE_ID: return
     headers = {"Authorization": f"Bearer {TOKEN}"}
-
     with open(image_path, "rb") as f:
-        files = {
-            "file": (image_path.name, f, "image/jpeg"),
-            "messaging_product": (None, "whatsapp"),
-        }
-        up = requests.post(upload_url, headers=headers, files=files)
-    up.raise_for_status()
+        up = requests.post(f"https://graph.facebook.com/v18.0/{PHONE_ID}/media", 
+                           headers=headers, files={"file": (image_path.name, f, "image/jpeg"), "messaging_product": (None, "whatsapp")})
+    if up.status_code != 200: return
     media_id = up.json()["id"]
-
-    send_url = f"https://graph.facebook.com/v18.0/{PHONE_ID}/messages"
-    send_headers = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
-
-    ok = 0
     for rcp in RECIPIENTS:
-        payload = {
-            "messaging_product": "whatsapp",
-            "to": rcp,
-            "type": "template",
-            "template": {
-                "name": "daily_report_nl",
-                "language": {"code": "nl"},
-                "components": [{
-                    "type": "header",
-                    "parameters": [{"type": "image", "image": {"id": media_id}}],
-                }],
-            },
-        }
-        resp = requests.post(send_url, headers=send_headers, json=payload)
-        if resp.status_code == 200:
-            ok += 1
-        else:
-            print(f"[whatsapp] fail {rcp}: {resp.status_code} {resp.text}")
-    print(f"[whatsapp] sent {ok}/{len(RECIPIENTS)}")
-from zoneinfo import ZoneInfo
-from pathlib import Path
-from datetime import datetime
+        payload = {"messaging_product": "whatsapp", "to": rcp, "type": "template", 
+                   "template": {"name": "daily_report_nl", "language": {"code": "nl"},
+                   "components": [{"type": "header", "parameters": [{"type": "image", "image": {"id": media_id}}]} ]}}
+        requests.post(f"https://graph.facebook.com/v18.0/{PHONE_ID}/messages", headers=headers, json=payload)
 
-
+# --- MAIN ---
 def main():
-    now = datetime.now(ZoneInfo("Europe/Amsterdam"))
-
-    if now.hour < 14:
-        print("[guard] vóór 14:00 NL, stop.")
-        return
-
-    state_dir = Path(".state")
-    state_dir.mkdir(exist_ok=True)
-    sent_flag = state_dir / f"sent_{now.date().isoformat()}.txt"
-    if sent_flag.exists():
-        print("[guard] vandaag al verstuurd, stop.")
-        return
-
-    api_key = os.environ["ENTSOE_API_KEY"]
-
-    today = datetime.now()
-    target_date = today + timedelta(days=1)
-    d_trading = today.strftime("%Y-%m-%d")
+    now = datetime.now(ZoneInfo(TZ))
+    api_key = os.environ.get("ENTSOE_API_KEY")
+    target_date = (pd.Timestamp.now(tz=TZ) + pd.Timedelta(days=1)).normalize()
     d_delivery = target_date.strftime("%Y-%m-%d")
 
-    target = (pd.Timestamp.now(tz=TZ) + pd.Timedelta(days=1)).normalize()
-    series_map = wait_for_day_ahead(api_key, zones=ZONES, target_date=target, poll_seconds=60, timeout_minutes=90)
-
+    # 1. ENTSO-E Data
+    print("Fetching ENTSO-E data...")
+    series_map = wait_for_day_ahead(api_key, zones=ZONES, target_date=target_date)
     hourly_map = {k: (None if v is None else v.astype(float).values) for k, v in series_map.items()}
 
-    p1 = plot_nl(hourly_map.get("NL"), d_trading, d_delivery)
+    # 2. Plots maken (Panel 1 & 2)
+    p1 = plot_nl(hourly_map.get("NL"), now.strftime("%Y-%m-%d"), d_delivery)
     p2 = plot_multi(hourly_map, d_delivery)
-    p3 = placeholder("Panel 3 (later): TenneT/Tenergy imbalance", OUTPUT_DIR / f"Panel3_{d_trading}.jpg")
-    p4 = placeholder("Panel 4 (later): ICE TTF / gas", OUTPUT_DIR / f"Panel4_{d_trading}.jpg")
 
-    collage = OUTPUT_DIR / f"Energy_Collage_{d_delivery}.jpg"
-    create_collage([p1, p2, p3, p4], collage)
+    # 3. Selenium Screenshots (Panel 3 & 4)
+    print("Starting Selenium captures...")
+    p3, p4 = capture_external_data()
 
+    # 4. Collage
+    print("Creating collage...")
+    final_report = OUTPUT_DIR / f"Market_Report_{d_delivery}.jpg"
+    create_collage([p1, p2, p3, p4], final_report)
+
+    # 5. Send
     try:
-        print("[whatsapp] sending...")
-        send_whatsapp_image(collage)
-        print("[whatsapp] sent OK")
+        send_whatsapp_image(final_report)
+        print(f"Succes! Rapport verzonden: {final_report}")
     except Exception as e:
-        print("[whatsapp] ERROR:", type(e).__name__, e)
-        raise
-
-    sent_flag.write_text(f"sent at {now.isoformat()}\n", encoding="utf-8")
-    print("[guard] sent flag written:", sent_flag)
-
+        print(f"Fout bij verzenden: {e}")
 
 if __name__ == "__main__":
     main()
