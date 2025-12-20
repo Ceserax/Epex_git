@@ -1,7 +1,11 @@
+selenium
+webdriver-manager
 pandas
 numpy
 matplotlib
-Pillow
 requests
 python-dotenv
+Pillow
+lxml
+html5lib
 entsoe-py

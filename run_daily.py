@@ -105,52 +105,72 @@ def plot_multi(hourly_map: dict, d_delivery: str):
     plt.close()
     return out
 
-# --- PANEL 3 & 4: SELENIUM SCREENSHOTS ---
-def capture_external_data():
-    """
-    Maakt screenshots van Tenergy en ICE TTF Gas.
-    """
-    p3_path = OUTPUT_DIR / "Tenergy_imbalance.jpg"
-    p4_path = OUTPUT_DIR / "ICE_TTF_Gas.jpg"
-    
+def init_driver():
+    """Initialiseert de driver op een manier die zowel lokaal als op GitHub werkt."""
     chrome_options = Options()
-    # Behoud jouw specifieke profiel-pad
-    chrome_options.add_argument("--user-data-dir=/Users/keeskoot/Library/Application Support/Google/Chrome/WhatsAppProfile")
+    
+    # CRUCIAAL VOOR GITHUB ACTIONS:
+    chrome_options.add_argument("--headless=new") # Geen scherm nodig
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
-    chrome_options.binary_location = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+
+    # Alleen lokaal je eigen profiel gebruiken, op GitHub niet
+    if not os.environ.get("GITHUB_ACTIONS"):
+        # Pad naar jouw lokale Chrome (alleen als je lokaal test op je Mac)
+        chrome_options.add_argument("--user-data-dir=/Users/keeskoot/Library/Application Support/Google/Chrome/WhatsAppProfile")
+        # chrome_options.binary_location = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
     
+    service = Service(ChromeDriverManager().install())
+    return webdriver.Chrome(service=service, options=chrome_options)
+
+def capture_external_data():
+    """Maakt screenshots van Tenergy en ICE TTF Gas."""
+    p3_path = OUTPUT_DIR / "Tenergy_imbalance.jpg"
+    p4_path = OUTPUT_DIR / "ICE_TTF_Gas.jpg"
+    
+    driver = None
     try:
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=chrome_options)
+        driver = init_driver()
         
         # Screenshot Tenergy (Panel 3)
         print("Capturing Tenergy...")
         driver.get('https://services.tenergy.nl/public.aspx/actualimbalanceprices')
-        time.sleep(5)
+        time.sleep(7) # Iets langer wachten voor de grafiek
         driver.save_screenshot(str(p3_path).replace(".jpg", ".png"))
         Image.open(str(p3_path).replace(".jpg", ".png")).convert("RGB").save(p3_path)
         
         # Screenshot ICE Gas (Panel 4)
         print("Capturing ICE Gas...")
         driver.get('https://www.ice.com/products/27996665/Dutch-TTF-Natural-Gas-Futures/data?marketId=5844634')
-        time.sleep(5)
+        time.sleep(8)
+        
+        # Probeer op de knop te klikken (indien aanwezig)
         try:
-            # Klik op de grafiek/data knop zoals in jouw script
-            btn = driver.find_element(By.XPATH, '/html/body/div[9]/div[3]/div/div[1]/div/div[2]/div/button[3]')
+            # Wees voorzichtig met volledige XPATHs, die veranderen vaak. 
+            # Beter is zoeken op tekst of kortere selectors indien mogelijk.
+            btn = driver.find_element(By.XPATH, '//button[contains(text(), "Chart")]') 
             btn.click()
             time.sleep(3)
-        except: pass
-        
+        except: 
+            print("ICE knop niet gevonden of niet nodig.")
+
         driver.save_screenshot(str(p4_path).replace(".jpg", ".png"))
         Image.open(str(p4_path).replace(".jpg", ".png")).convert("RGB").save(p4_path)
         
-        driver.quit()
+        # PNG's opruimen
+        for p in [p3_path, p4_path]:
+            png = str(p).replace(".jpg", ".png")
+            if os.path.exists(png): os.remove(png)
+
         return p3_path, p4_path
+
     except Exception as e:
         print(f"Selenium Error: {e}")
         return None, None
+    finally:
+        if driver:
+            driver.quit()
 
 # --- COLLAGE & SEND ---
 def create_collage(paths, out_path: Path):
