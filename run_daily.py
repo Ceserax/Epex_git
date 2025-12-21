@@ -202,18 +202,48 @@ def send_whatsapp_image(image_path: Path):
         payload = {"messaging_product": "whatsapp", "to": rcp, "type": "template", 
                    "template": {"name": "daily_report_nl", "language": {"code": "nl"},
                    "components": [{"type": "header", "parameters": [{"type": "image", "image": {"id": media_id}}]} ]}}
-        requests.post(f"https://graph.facebook.com/v18.0/{PHONE_ID}/messages", headers=headers, json=payload)
+    requests.post(f"https://graph.facebook.com/v18.0/{PHONE_ID}/messages", headers=headers, json=payload)
 
+def check_if_already_sent(d_delivery):
+    """Controleert of er in de .state map al een succes-bestand staat voor vandaag."""
+    state_dir = Path(".state")
+    state_file = state_dir / f"sent_{d_delivery}.txt"
+    
+    if state_file.exists():
+        print(f">>> [SKIP] Rapport voor {d_delivery} is al eerder verzonden vandaag.")
+        return True
+    return False
+
+def mark_as_sent(d_delivery):
+    """Maakt een bestandje aan in de .state map om te onthouden dat het verzonden is."""
+    state_dir = Path(".state")
+    state_dir.mkdir(exist_ok=True)
+    state_file = state_dir / f"sent_{d_delivery}.txt"
+    with open(state_file, "w") as f:
+        f.write(f"Verzonden op {datetime.now()}")
+    print(f">>> [STATE] Succes opgeslagen in {state_file}")
 # --- MAIN ---
+
+
 def main():
     now = datetime.now(ZoneInfo(TZ))
     api_key = os.environ.get("ENTSOE_API_KEY")
     target_date = (pd.Timestamp.now(tz=TZ) + pd.Timedelta(days=1)).normalize()
     d_delivery = target_date.strftime("%Y-%m-%d")
 
+    # 0. Check of we vandaag al succesvol zijn geweest voor deze datum
+    if check_if_already_sent(d_delivery):
+        return # STOP HET SCRIPT
+
     # 1. ENTSO-E Data
     print("Fetching ENTSO-E data...")
     series_map = wait_for_day_ahead(api_key, zones=ZONES, target_date=target_date)
+    
+    # Check of de data wel echt binnen is (voorkom lege rapporten)
+    if series_map.get("NL") is None:
+        print("Geen data beschikbaar voor NL. Script stopt en probeert het later opnieuw.")
+        return
+
     hourly_map = {k: (None if v is None else v.astype(float).values) for k, v in series_map.items()}
 
     # 2. Plots maken (Panel 1 & 2)
@@ -233,6 +263,10 @@ def main():
     try:
         send_whatsapp_image(final_report)
         print(f"Succes! Rapport verzonden: {final_report}")
+        
+        # 6. ZET HET VINKJE: Onthoud dat het verzonden is
+        mark_as_sent(d_delivery)
+        
     except Exception as e:
         print(f"Fout bij verzenden: {e}")
 

@@ -2,13 +2,15 @@ name: ENTSO-E watcher (robust v2)
 
 concurrency:
   group: energybot
-  cancel-in-progress: true
+  # Veranderd naar false zodat een verzending niet wordt onderbroken
+  cancel-in-progress: false 
 
 on:
   workflow_dispatch:
   
   schedule:
-  - cron: "0,15,30,45 13-14 * * *"
+    # Aangepast naar elke 30 minuten tussen 13:00 en 14:30 UTC (14:00 - 15:30 NL tijd)
+    - cron: "0,30 13-14 * * *"
 
 jobs:
   run:
@@ -28,11 +30,10 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          # We installeren selenium ook expliciet voor de zekerheid
           pip install selenium webdriver-manager
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      # Cache-key per dag (UTC) zodat .state blijft bestaan én geen cache-lock conflicts geeft
+      # Cache-key per dag (UTC) zodat .state blijft bestaan
       - name: Set day key
         run: echo "DAY_KEY=$(date -u +'%Y-%m-%d')" >> $GITHUB_ENV
 
@@ -51,7 +52,6 @@ jobs:
           echo "DAY_KEY=$DAY_KEY"
           ls -la .state || true
 
-      # --- HIER IS DE TOEGEVOEGDE STAP VOOR DE BROWSER ---
       - name: Install Google Chrome
         run: |
           sudo apt-get update
