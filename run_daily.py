@@ -191,18 +191,65 @@ def create_collage(paths, out_path: Path):
     return out_path
 
 def send_whatsapp_image(image_path: Path):
-    if not TOKEN or not PHONE_ID: return
+    if not TOKEN or not PHONE_ID:
+        print("❌ FOUT: WHATSAPP_TOKEN of WHATSAPP_PHONE_NUMBER_ID ontbreekt!")
+        return
+        
     headers = {"Authorization": f"Bearer {TOKEN}"}
+    
+    # 1. Upload de afbeelding
+    print(f"Media uploaden naar WhatsApp: {image_path.name}...")
     with open(image_path, "rb") as f:
-        up = requests.post(f"https://graph.facebook.com/v18.0/{PHONE_ID}/media", 
-                           headers=headers, files={"file": (image_path.name, f, "image/jpeg"), "messaging_product": (None, "whatsapp")})
-    if up.status_code != 200: return
-    media_id = up.json()["id"]
+        up = requests.post(
+            f"https://graph.facebook.com/v18.0/{PHONE_ID}/media", 
+            headers=headers, 
+            files={
+                "file": (image_path.name, f, "image/jpeg"), 
+                "messaging_product": (None, "whatsapp")
+            }
+        )
+    
+    if up.status_code != 200:
+        print(f"❌ FOUT bij media upload: {up.status_code} - {up.text}")
+        return
+        
+    media_id = up.json().get("id")
+    print(f"✅ Media geüpload. Media ID: {media_id}")
+
+    # 2. Verstuur naar elke ontvanger
+    if not RECIPIENTS:
+        print("⚠️ Geen ontvangers gevonden in WHATSAPP_RECIPIENTS")
+        return
+
     for rcp in RECIPIENTS:
-        payload = {"messaging_product": "whatsapp", "to": rcp, "type": "template", 
-                   "template": {"name": "daily_report_nl", "language": {"code": "nl"},
-                   "components": [{"type": "header", "parameters": [{"type": "image", "image": {"id": media_id}}]} ]}}
-    requests.post(f"https://graph.facebook.com/v18.0/{PHONE_ID}/messages", headers=headers, json=payload)
+        print(f"Bericht versturen naar {rcp}...")
+        payload = {
+            "messaging_product": "whatsapp", 
+            "to": rcp, 
+            "type": "template", 
+            "template": {
+                "name": "daily_report_nl", 
+                "language": {"code": "nl"},
+                "components": [
+                    {
+                        "type": "header", 
+                        "parameters": [{"type": "image", "image": {"id": media_id}}]
+                    }
+                ]
+            }
+        }
+        
+        # DEZE REGEL MOET BINNEN DE FOR-LOOP STAAN (ingesprongen):
+        resp = requests.post(
+            f"https://graph.facebook.com/v18.0/{PHONE_ID}/messages", 
+            headers=headers, 
+            json=payload
+        )
+        
+        if resp.status_code == 200:
+            print(f"✅ Succesvol verzonden naar {rcp}")
+        else:
+            print(f"❌ FOUT bij verzenden naar {rcp}: {resp.status_code} - {resp.text}")
 
 def check_if_already_sent(d_delivery):
     """Controleert of er in de .state map al een succes-bestand staat voor vandaag."""
@@ -231,20 +278,25 @@ def main():
     target_date = (pd.Timestamp.now(tz=TZ) + pd.Timedelta(days=1)).normalize()
     d_delivery = target_date.strftime("%Y-%m-%d")
 
-    # 0. Check of we vandaag al succesvol zijn geweest voor deze datum
+    # 0. Check of we vandaag al succesvol zijn geweest
     if check_if_already_sent(d_delivery):
-        return # STOP HET SCRIPT
+        return 
 
-    # 1. ENTSO-E Data
-    print("Fetching ENTSO-E data...")
-    series_map = wait_for_day_ahead(api_key, zones=ZONES, target_date=target_date)
+    # 1. ENTSO-E Data (Wacht ALLEEN op Nederland)
+    print("Fetching ENTSO-E data (Waiting for NL to be complete)...")
     
-    # Check of de data wel echt binnen is (voorkom lege rapporten)
-    if series_map.get("NL") is None:
-        print("Geen data beschikbaar voor NL. Script stopt en probeert het later opnieuw.")
+    # We roepen de watcher aan met de instructie: stop met wachten zodra NL er is
+    series_map = wait_for_day_ahead(api_key, zones=ZONES, target_date=target_date, primary_zone="NL")
+    
+    # Als NL er zelfs na het wachten niet is, stoppen we
+    if series_map.get("NL") is None or len(series_map.get("NL")) < 96:
+        print("NL data is nog niet compleet. Script stopt en probeert het later opnieuw.")
         return
 
     hourly_map = {k: (None if v is None else v.astype(float).values) for k, v in series_map.items()}
+    print(f"NL data gevonden. Andere landen status: {[k for k,v in hourly_map.items() if v is not None]}")
+
+    # 2. Plots maken... (rest van de code blijft hetzelfde)
 
     # 2. Plots maken (Panel 1 & 2)
     p1 = plot_nl(hourly_map.get("NL"), now.strftime("%Y-%m-%d"), d_delivery)

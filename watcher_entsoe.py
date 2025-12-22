@@ -16,7 +16,8 @@ def _fetch(client, eic, start, end):
     return s.tz_convert(TZ).sort_index()
 
 def wait_for_day_ahead(api_key: str, zones: dict, target_date: pd.Timestamp,
-                       poll_seconds: int = 60, timeout_minutes: int = 90):
+                       poll_seconds: int = 60, timeout_minutes: int = 120,
+                       primary_zone: str = "NL"): # We voegen een standaard primary_zone toe
     client = EntsoePandasClient(api_key=api_key)
 
     start = pd.Timestamp(target_date.date(), tz=TZ)
@@ -28,26 +29,30 @@ def wait_for_day_ahead(api_key: str, zones: dict, target_date: pd.Timestamp,
 
     while time.time() < deadline:
         out = {}
-        ok = True
-
+        
+        # We halen data op voor alle landen
         for code, eic in zones.items():
             try:
                 s = _fetch(client, eic, start, end)
             except Exception:
                 s = None
             out[code] = s
-            if s is None or len(s.dropna()) < exp:
-                ok = False
 
+        # Status loggen voor in GitHub Actions
         status = {k: (None if v is None else int(v.dropna().shape[0])) for k, v in out.items()}
         if status != last:
             print(f"[watcher] completeness expected {exp}: {status}")
             last = status
 
-        if ok:
-            print("[watcher] Day-ahead complete.")
+        # --- DE NIEUWE LOGICA ---
+        # We kijken alleen of de 'primary_zone' (NL) compleet is
+        nl_data = out.get(primary_zone)
+        if nl_data is not None and len(nl_data.dropna()) >= exp:
+            print(f"[watcher] Primary zone '{primary_zone}' is compleet. We gaan door!")
             return out
+        # ------------------------
 
         time.sleep(poll_seconds)
 
-    raise TimeoutError("Day-ahead not complete within timeout.")
+    # Als de tijd om is en NL is er nog niet:
+    raise TimeoutError(f"Primary zone '{primary_zone}' was niet compleet binnen de tijd.")
