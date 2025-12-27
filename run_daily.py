@@ -88,23 +88,49 @@ def plot_nl(nl_data: np.ndarray, d_trading: str, d_delivery: str):
     return out
 
 # --- PANEL 2: MULTI COUNTRY ---
+# --- PANEL 2: MULTI COUNTRY ---
 def plot_multi(hourly_map: dict, d_delivery: str):
     plt.figure(figsize=(15, 9))
+    
+    # We lopen door de landen heen
     for c in sorted(hourly_map.keys()):
         arr = hourly_map[c]
         if arr is None or len(arr) == 0: continue
+        
+        # Stap A: Bereken de baseload (het gemiddelde van de beschikbare data)
+        baseload = np.mean(arr)
+        
+        # Stap B: Maak een mooie label voor de legenda met de prijs erbij
+        # Bijv: "NL (€54.20)"
+        label_text = f"{c} (€{baseload:.2f})"
+        
+        # Stap C: Zorg voor 96 kwartieren voor de plot
         q_data = ensure_96_quarters(arr)
-        plt.plot(np.arange(96), q_data, label=c, color=COUNTRIES.get(c, {}).get("color", "black"), linewidth=1.5, alpha=0.8)
+        
+        # Stap D: Plot de lijn met de nieuwe label
+        plt.plot(
+            np.arange(96), 
+            q_data, 
+            label=label_text, 
+            color=COUNTRIES.get(c, {}).get("color", "black"), 
+            linewidth=1.5, 
+            alpha=0.8
+        )
+
     plt.title(f"Day-Ahead Prijsvergelijking Europa (96 Kwartieren) - {d_delivery}", fontsize=15)
     plt.xticks(np.arange(2, 96, 4), [str(i) for i in range(1, 25)])
+    plt.ylabel("Prijs (€/MWh)")
+    plt.xlabel("Uur van de dag")
     plt.grid(True, linestyle="--", alpha=0.4)
-    plt.legend(loc='upper left', bbox_to_anchor=(1.01, 1), fontsize=10)
+    
+    # De legenda staat rechts naast de grafiek door bbox_to_anchor
+    plt.legend(loc='upper left', bbox_to_anchor=(1.01, 1), fontsize=10, title="Landen (Baseload)")
+    
     plt.tight_layout()
     out = OUTPUT_DIR / f"Multi_Country_{d_delivery}.jpg"
     plt.savefig(out, dpi=150, bbox_inches='tight')
     plt.close()
     return out
-
 def init_driver():
     """Initialiseert de driver op een manier die zowel lokaal als op GitHub werkt."""
     chrome_options = Options()
