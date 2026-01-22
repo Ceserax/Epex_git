@@ -10,3 +10,4 @@ lxml
 html5lib
 entsoe-py
 tzdata
+pytz
