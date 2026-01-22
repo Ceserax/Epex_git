@@ -5,7 +5,7 @@ from entsoe import EntsoePandasClient
 TZ = "Europe/Amsterdam"
 
 def _expected_hours(start, end):
-    return len(pd.date_range(start, end, freq="H", inclusive="left", tz=TZ))
+    return len(pd.date_range(start, end, freq="h", inclusive="left", tz=TZ))
 
 def _fetch(client, eic, start, end):
     s = client.query_day_ahead_prices(eic, start=start, end=end)
