@@ -312,7 +312,7 @@ def main():
     # We berekenen hoeveel uren we verwachten (meestal 24, soms 23 of 25 bij zomertijd)
     start_ts = pd.Timestamp(target_date.date(), tz=TZ)
     end_ts = start_ts + pd.Timedelta(days=1)
-    exp_hours = len(pd.date_range(start_ts, end_ts, freq="H", inclusive="left", tz=TZ))
+    exp_hours = len(pd.date_range(start_ts, end_ts, freq="h", inclusive="left", tz=TZ))
 
     # We roepen de watcher aan met de instructie: stop met wachten zodra NL er is
     series_map = wait_for_day_ahead(api_key, zones=ZONES, target_date=target_date, primary_zone="NL")
