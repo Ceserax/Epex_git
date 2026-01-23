@@ -309,14 +309,18 @@ def main():
         return 
 
     # 1. ENTSO-E Data (Wacht ALLEEN op Nederland)
-    print("Fetching ENTSO-E data (Waiting for NL to be complete)...")
-    
+    # We berekenen hoeveel uren we verwachten (meestal 24, soms 23 of 25 bij zomertijd)
+    start_ts = pd.Timestamp(target_date.date(), tz=TZ)
+    end_ts = start_ts + pd.Timedelta(days=1)
+    exp_hours = len(pd.date_range(start_ts, end_ts, freq="H", inclusive="left", tz=TZ))
+
     # We roepen de watcher aan met de instructie: stop met wachten zodra NL er is
     series_map = wait_for_day_ahead(api_key, zones=ZONES, target_date=target_date, primary_zone="NL")
     
     # Als NL er zelfs na het wachten niet is, stoppen we
-    if series_map.get("NL") is None or len(series_map.get("NL")) < 96:
-        print("NL data is nog niet compleet. Script stopt en probeert het later opnieuw.")
+    nl_data = series_map.get("NL")
+    if nl_data is None or len(nl_data.dropna()) < exp_hours:
+        print(f"NL data is nog niet compleet (verwacht {exp_hours} uren). Script stopt.")
         return
 
     hourly_map = {k: (None if v is None else v.astype(float).values) for k, v in series_map.items()}
