@@ -33,30 +33,6 @@ jobs:
           pip install selenium webdriver-manager tzdata pytz
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      - name: Hotfix entsoe timezone key
-        run: |
-          python - <<'PY'
-          import pathlib, site
-      
-          target = None
-          for p in site.getsitepackages():
-              cand = pathlib.Path(p) / "entsoe" / "entsoe.py"
-              if cand.exists():
-                  target = cand
-                  break
-      
-          if not target:
-              raise SystemExit("entsoe/entsoe.py not found in site-packages")
-      
-          txt = target.read_text(encoding="utf-8")
-          txt2 = txt.replace("tz='europe/amsterdam'", "tz='Europe/Amsterdam'")
-      
-          if txt == txt2:
-              raise SystemExit("Pattern not found; entsoe.py may have changed upstream")
-      
-          target.write_text(txt2, encoding="utf-8")
-          print("Patched:", target)
-          PY
 
       # Cache-key per dag (UTC) zodat .state blijft bestaan
       - name: Set day key
