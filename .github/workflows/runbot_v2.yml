@@ -2,14 +2,11 @@ name: ENTSO-E watcher (robust v2)
 
 concurrency:
   group: energybot
-  # Veranderd naar false zodat een verzending niet wordt onderbroken
-  cancel-in-progress: false 
+  cancel-in-progress: false
 
 on:
   workflow_dispatch:
-  
   schedule:
-    # Aangepast naar elke 30 minuten tussen 13:00 en 14:30 UTC (14:00 - 15:30 NL tijd)
     - cron: "0,30 13-14 * * *"
 
 jobs:
@@ -33,7 +30,6 @@ jobs:
           pip install selenium webdriver-manager tzdata pytz
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-
       # Cache-key per dag (UTC) zodat .state blijft bestaan
       - name: Set day key
         run: echo "DAY_KEY=$(date -u +'%Y-%m-%d')" >> $GITHUB_ENV
@@ -43,8 +39,6 @@ jobs:
         with:
           path: .state
           key: energybot-state-${{ env.DAY_KEY }}
-          restore-keys: |
-            energybot-state-
 
       - name: Debug paths
         run: |
@@ -61,13 +55,15 @@ jobs:
       - name: Run bot
         env:
           ENTSOE_API_KEY: ${{ secrets.ENTSOE_API_KEY }}
-          WHATSAPP_TOKEN: ${{ secrets.WHATSAPP_TOKEN }}
+          WHATSAPP_ACCESS_TOKEN: ${{ secrets.WHATSAPP_ACCESS_TOKEN }}
           WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.WHATSAPP_PHONE_NUMBER_ID }}
           WHATSAPP_RECIPIENTS: ${{ secrets.WHATSAPP_RECIPIENTS }}
           GITHUB_ACTIONS: "true"
         run: |
           python run_daily.py
 
+      # Optioneel: deze step kun je weglaten; cache wordt door actions/cache
+      # automatisch opgeslagen aan het einde van de job als er changes zijn.
       - name: Save sent-state cache
         uses: actions/cache@v4
         with:
