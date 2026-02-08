@@ -48,7 +48,7 @@ BASE_DIR = Path(os.getcwd())
 OUTPUT_DIR = BASE_DIR / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-TOKEN = os.environ.get("WHATSAPP_TOKEN")
+TOKEN = os.environ.get("WHATSAPP_ACCES_TOKEN")
 PHONE_ID = os.environ.get("WHATSAPP_PHONE_NUMBER_ID")
 RECIPIENTS = [r.strip() for r in os.environ.get("WHATSAPP_RECIPIENTS", "").split(",") if r.strip()]
 
