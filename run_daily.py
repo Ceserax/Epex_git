@@ -1,6 +1,5 @@
 import os
 import time
-import subprocess
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -8,7 +7,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from datetime import datetime
 from pathlib import Path
-from PIL import Image, ImageDraw
+from PIL import Image
 import requests
 from dotenv import load_dotenv
 from zoneinfo import ZoneInfo
@@ -26,6 +25,7 @@ from watcher_entsoe import wait_for_day_ahead
 load_dotenv(Path(__file__).with_name(".env"))
 
 TZ = "Europe/Amsterdam"
+TZINFO = ZoneInfo(TZ)
 
 # Configuratie
 ZONES = {
@@ -48,34 +48,57 @@ BASE_DIR = Path(os.getcwd())
 OUTPUT_DIR = BASE_DIR / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-# ✅ FIX 1: juiste env var naam + typo weg
+# WhatsApp config
 TOKEN = os.environ.get("WHATSAPP_ACCESS_TOKEN")
 PHONE_ID = os.environ.get("WHATSAPP_PHONE_NUMBER_ID")
-
-# ✅ (extra) jij gebruikt in GitHub WHATSAPP_RECIPIENTS, dus dit klopt
 RECIPIENTS = [r.strip() for r in os.environ.get("WHATSAPP_RECIPIENTS", "").split(",") if r.strip()]
+
+# Gedrag bij incomplete data:
+# - FAIL_IF_INCOMPLETE=1  -> raise error -> GitHub run rood
+# - anders               -> netjes stoppen -> GitHub run groen
+FAIL_IF_INCOMPLETE = os.environ.get("FAIL_IF_INCOMPLETE", "0") == "1"
+
 
 # --- HELPER FUNCTIES ---
 
+def expected_hours_for_delivery_date(target_date: pd.Timestamp, tz: str) -> int:
+    """
+    DST-proof: geeft 23/24/25 afhankelijk van zomertijd-omschakeling.
+    target_date is een tz-aware Timestamp in Europe/Amsterdam, genormaliseerd op middernacht.
+    """
+    start_ts = pd.Timestamp(target_date.date(), tz=tz)
+    end_ts = start_ts + pd.Timedelta(days=1)
+    hours = len(pd.date_range(start_ts, end_ts, freq="h", inclusive="left", tz=tz))
+    return hours
+
 def ensure_96_quarters(data: np.ndarray) -> np.ndarray:
     length = len(data)
-    if length == 96: return data
-    if length == 24: return np.repeat(data, 4)
-    if length == 48: return np.repeat(data, 2)
+    if length == 96:
+        return data
+    if length == 24:
+        return np.repeat(data, 4)
+    if length == 48:
+        return np.repeat(data, 2)
     return np.interp(np.linspace(0, length, 96), np.arange(length), data)
 
 # --- PANEL 1: NL BAR PLOT ---
 def plot_nl(nl_data: np.ndarray, d_trading: str, d_delivery: str):
-    if nl_data is None or len(nl_data) == 0: return None
+    if nl_data is None or len(nl_data) == 0:
+        return None
+
     q = ensure_96_quarters(nl_data)
     max_p, min_p = np.max(q), np.min(q)
 
     colors = []
     for i, p in enumerate(q):
-        if p == max_p: colors.append("#228B22") # HOOGSTE = GROEN
-        elif p == min_p: colors.append("#FF0000") # LAAGSTE = ROOD
-        elif 32 <= i < 80: colors.append("#87CEEB") # PEAK = BLAUW
-        else: colors.append("#7d7d7d") # OFF-PEAK = GRIJS
+        if p == max_p:
+            colors.append("#228B22")  # hoogste groen
+        elif p == min_p:
+            colors.append("#FF0000")  # laagste rood
+        elif 32 <= i < 80:
+            colors.append("#87CEEB")  # peak blauw
+        else:
+            colors.append("#7d7d7d")  # off-peak grijs
 
     fig, ax = plt.subplots(figsize=(14, 8))
     ax.bar(range(96), q, color=colors, edgecolor="black", linewidth=0.4, width=1.0)
@@ -164,7 +187,7 @@ def capture_external_data():
             btn = driver.find_element(By.XPATH, '//button[contains(text(), "Chart")]')
             btn.click()
             time.sleep(3)
-        except:
+        except Exception:
             print("ICE knop niet gevonden of niet nodig.")
 
         driver.save_screenshot(str(p4_path).replace(".jpg", ".png"))
@@ -200,7 +223,6 @@ def create_collage(paths, out_path: Path):
     canvas.save(out_path, quality=90)
     return out_path
 
-# ✅ FIX 2 + 3: streng verzenden, fouten laten falen, True teruggeven bij succes
 def send_whatsapp_image(image_path: Path) -> bool:
     if not TOKEN or not PHONE_ID:
         raise RuntimeError("WHATSAPP_ACCESS_TOKEN of WHATSAPP_PHONE_NUMBER_ID ontbreekt")
@@ -268,7 +290,7 @@ def check_if_already_sent(d_delivery):
     state_file = state_dir / f"sent_{d_delivery}.txt"
 
     if state_file.exists():
-        print(f">>> [SKIP] Rapport voor {d_delivery} is al eerder verzonden vandaag.")
+        print(f">>> [SKIP] Rapport voor {d_delivery} is al eerder verzonden.")
         return True
     return False
 
@@ -277,50 +299,87 @@ def mark_as_sent(d_delivery):
     state_dir.mkdir(exist_ok=True)
     state_file = state_dir / f"sent_{d_delivery}.txt"
     with open(state_file, "w") as f:
-        f.write(f"Verzonden op {datetime.now()}")
+        f.write(f"Verzonden op {datetime.now(TZINFO)}")
     print(f">>> [STATE] Succes opgeslagen in {state_file}")
 
 def main():
-    now = datetime.now(ZoneInfo(TZ))
+    now = datetime.now(TZINFO)
+
     api_key = os.environ.get("ENTSOE_API_KEY")
-    target_date = (pd.Timestamp.now(tz=TZ) + pd.Timedelta(days=1)).normalize()
+    if not api_key:
+        raise RuntimeError("ENTSOE_API_KEY ontbreekt")
+
+    # target_date vanuit NL-tijd (minder UTC-verwarring)
+    target_date = (pd.Timestamp(now).tz_convert(TZ).normalize() + pd.Timedelta(days=1))
     d_delivery = target_date.strftime("%Y-%m-%d")
 
     if check_if_already_sent(d_delivery):
         return
 
-    start_ts = pd.Timestamp(target_date.date(), tz=TZ)
-    end_ts = start_ts + pd.Timedelta(days=1)
-    exp_hours = len(pd.date_range(start_ts, end_ts, freq="h", inclusive="left", tz=TZ))
+    exp_hours = expected_hours_for_delivery_date(target_date, TZ)
+    print(f"[INFO] Delivery date: {d_delivery} | expected hours (DST-proof): {exp_hours}")
 
-    series_map = wait_for_day_ahead(api_key, zones=ZONES, target_date=target_date, primary_zone="NL")
+    # --- Cruciale fix: watcher kan TimeoutError gooien -> afvangen ---
+    try:
+        series_map = wait_for_day_ahead(
+            api_key,
+            zones=ZONES,
+            target_date=target_date,
+            primary_zone="NL"
+        )
+    except TimeoutError as e:
+        msg = f"NL nog niet compleet binnen watcher-timeout: {e}"
+        if FAIL_IF_INCOMPLETE:
+            raise RuntimeError(msg)
+        print("⚠️", msg)
+        return
 
-    nl_data = series_map.get("NL")
-    if nl_data is None or len(nl_data.dropna()) < exp_hours:
-        print(f"NL data is nog niet compleet (verwacht {exp_hours} uren). Script stopt.")
+    if not isinstance(series_map, dict):
+        msg = f"Onverwachte return van wait_for_day_ahead: {type(series_map)}"
+        if FAIL_IF_INCOMPLETE:
+            raise RuntimeError(msg)
+        print("⚠️", msg)
+        return
+
+    nl_series = series_map.get("NL")
+    if nl_series is None:
+        msg = f"NL series ontbreekt/None voor {d_delivery}"
+        if FAIL_IF_INCOMPLETE:
+            raise RuntimeError(msg)
+        print("⚠️", msg)
+        return
+
+    # DST-proof completeness check in jouw script (niet hardcoded 24)
+    nl_non_na = int(nl_series.dropna().shape[0])
+    if nl_non_na < exp_hours:
+        msg = f"NL data nog niet compleet: {nl_non_na}/{exp_hours} uren."
+        if FAIL_IF_INCOMPLETE:
+            raise RuntimeError(msg)
+        print("⚠️", msg)
         return
 
     hourly_map = {k: (None if v is None else v.astype(float).values) for k, v in series_map.items()}
-    print(f"NL data gevonden. Andere landen status: {[k for k,v in hourly_map.items() if v is not None]}")
+    ok_countries = [k for k, v in hourly_map.items() if v is not None]
+    print(f"[INFO] NL data compleet. Landen met data: {ok_countries}")
 
+    # Plots
     p1 = plot_nl(hourly_map.get("NL"), now.strftime("%Y-%m-%d"), d_delivery)
     p2 = plot_multi(hourly_map, d_delivery)
 
+    # Selenium captures
     print("Starting Selenium captures...")
     p3, p4 = capture_external_data()
 
+    # Collage
     print("Creating collage...")
     final_report = OUTPUT_DIR / f"Market_Report_{d_delivery}.jpg"
     create_collage([p1, p2, p3, p4], final_report)
 
-    # ✅ FIX 4: alleen mark_as_sent bij echte succes, en job rood bij fouten
+    # WhatsApp verzending
     ok = send_whatsapp_image(final_report)
     if ok:
         print(f"✅ Succes! Rapport verzonden: {final_report}")
         mark_as_sent(d_delivery)
-
-if __name__ == "__main__":
-    main()
 
 if __name__ == "__main__":
     main()
