@@ -60,7 +60,7 @@ jobs:
           WHATSAPP_PHONE_NUMBER_ID: ${{ secrets.WHATSAPP_PHONE_NUMBER_ID }}
           WHATSAPP_RECIPIENTS: ${{ secrets.WHATSAPP_RECIPIENTS }}
           GITHUB_ACTIONS: "true"
-          GITHUB_ACTIONS: "true"PYTHONUNBUFFERED: "1"
+          PYTHONUNBUFFERED: "1"
           
         run: |
           python run_daily.py
