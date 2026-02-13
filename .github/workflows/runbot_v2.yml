@@ -1,13 +1,14 @@
 name: ENTSO-E watcher (robust v2)
 
 concurrency:
-  group: energybot
+  group: entsoe-watcher-robust-v2
   cancel-in-progress: false
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0,30 13-14 * * *"
+    # Eén startmoment; de Python code wacht/polt tot data compleet is
+    - cron: "0 13 * * *"
 
 jobs:
   run:
@@ -35,7 +36,7 @@ jobs:
         run: echo "DAY_KEY=$(date -u +'%Y-%m-%d')" >> $GITHUB_ENV
 
       - name: Restore sent-state cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: .state
           key: energybot-state-${{ env.DAY_KEY }}
@@ -62,10 +63,9 @@ jobs:
         run: |
           python run_daily.py
 
-      # Optioneel: deze step kun je weglaten; cache wordt door actions/cache
-      # automatisch opgeslagen aan het einde van de job als er changes zijn.
       - name: Save sent-state cache
-        uses: actions/cache@v4
+        if: always()
+        uses: actions/cache/save@v4
         with:
           path: .state
           key: energybot-state-${{ env.DAY_KEY }}
