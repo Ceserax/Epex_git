@@ -73,13 +73,15 @@ def expected_hours_for_delivery_date(target_date: pd.Timestamp, tz: str) -> int:
 
 def ensure_96_quarters(data: np.ndarray) -> np.ndarray:
     length = len(data)
+    if length == 0:
+        return data
     if length == 96:
         return data
     if length == 24:
         return np.repeat(data, 4)
     if length == 48:
         return np.repeat(data, 2)
-    return np.interp(np.linspace(0, length, 96), np.arange(length), data)
+    return np.interp(np.linspace(0, length - 1, 96), np.arange(length), data)
 
 # --- PANEL 1: NL BAR PLOT ---
 def plot_nl(nl_data: np.ndarray, d_trading: str, d_delivery: str):
